@@ -3,225 +3,245 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pro Hand Tracker</title>
+<title>Jarvis HUD & Air Paint</title>
 
 <style>
-  * { box-sizing: border-box; }
+  body { margin: 0; background: #000; color: #00eeff; font-family: 'Courier New', monospace; overflow: hidden; }
   
-  body {
-    margin: 0;
-    background: radial-gradient(circle, #1a1a2e, #0f0f1a);
-    color: white;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    overflow: hidden;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    height: 100vh;
+  #container { position: relative; width: 100vw; height: 100vh; }
+  
+  video, canvas { 
+    position: absolute; width: 100%; height: 100%; object-fit: cover; 
+    transform: scaleX(-1); /* Зеркало для фронталки (логика переключения ниже) */
   }
 
-  /* Контейнер чтобы видео и канвас не разъезжались */
-  #container {
-    position: relative;
-    width: 100%;
-    max-width: 800px;
-    aspect-ratio: 4/3;
-    border-radius: 16px;
-    box-shadow: 0 0 30px rgba(0, 255, 170, 0.2);
-    overflow: hidden;
-    background: #000;
-  }
-
-  video, canvas {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    transform: scaleX(-1); /* Зеркалим изображение */
-  }
-
-  /* HUD для жестов */
-  #hud {
-    position: absolute;
-    bottom: 20px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: rgba(0, 0, 0, 0.7);
-    border: 1px solid lime;
-    padding: 10px 20px;
-    border-radius: 8px;
-    font-size: 24px;
-    font-weight: bold;
-    color: lime;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    z-index: 5;
-    display: none;
-    text-shadow: 0 0 10px lime;
+  .ui-panel {
+    position: absolute; z-index: 100; padding: 20px;
+    display: flex; flex-direction: column; gap: 10px;
   }
 
   button {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    z-index: 10;
-    padding: 15px 40px;
-    font-size: 20px;
-    font-weight: bold;
-    color: #fff;
-    background: linear-gradient(45deg, #ff0055, #ff00aa);
-    border: none;
-    border-radius: 30px;
+    background: rgba(0, 238, 255, 0.2);
+    border: 1px solid #00eeff;
+    color: #00eeff;
+    padding: 10px 20px;
     cursor: pointer;
-    box-shadow: 0 0 20px rgba(255, 0, 170, 0.5);
-    transition: 0.2s;
+    text-transform: uppercase;
+    font-weight: bold;
+    transition: 0.3s;
   }
 
-  button:hover {
-    transform: translate(-50%, -50%) scale(1.05);
-    box-shadow: 0 0 30px rgba(255, 0, 170, 0.8);
+  button:hover { background: #00eeff; color: #000; box-shadow: 0 0 15px #00eeff; }
+
+  #status {
+    position: absolute; top: 20px; right: 20px;
+    text-align: right; pointer-events: none;
+    text-shadow: 0 0 5px #00eeff;
   }
 </style>
 </head>
 <body>
 
 <div id="container">
-  <button id="startBtn">ВРУБИТЬ КАМЕРУ</button>
-  <video id="video" autoplay playsinline></video>
+  <div class="ui-panel">
+    <button id="startBtn">Инициализация системы</button>
+    <button id="switchCamBtn" style="display:none;">Сменить камеру</button>
+    <button id="clearBtn" style="display:none;">Очистить холст</button>
+  </div>
+
+  <div id="status">SYSTEM: STANDBY<br>USER: UNKNOWN</div>
+
+  <video id="video" playsinline></video>
   <canvas id="canvas"></canvas>
-  <div id="hud">Ожидание...</div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 
 <script>
-const video = document.getElementById("video");
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
-const btn = document.getElementById("startBtn");
-const hud = document.getElementById("hud");
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const startBtn = document.getElementById('startBtn');
+const switchBtn = document.getElementById('switchCamBtn');
+const clearBtn = document.getElementById('clearBtn');
+const statusText = document.getElementById('status');
 
-// Массив для фишки со следом (трейлом) указательного пальца
-let pointerTrail = [];
+let currentFacingMode = 'user';
+let camera = null;
+let drawingPoints = []; // Массив для рисования [[{x,y}, {x,y}], [...]]
+let isDrawing = false;
 
-btn.onclick = async () => {
-  btn.innerText = "Загрузка...";
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: 640, height: 480, facingMode: "user" }
-    });
-    video.srcObject = stream;
-    
-    // Как только видео прогрузилось - стартуем трекинг
-    video.onloadedmetadata = () => {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      btn.style.display = "none";
-      hud.style.display = "block";
-      startTracking();
-    };
-  } catch (err) {
-    alert("Чел, дай доступ к камере! Без неё магии не будет.");
-    btn.innerText = "Ошибка доступа";
+// Инициализация Holistic
+const holistic = new Holistic({
+  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
+});
+
+holistic.setOptions({
+  modelComplexity: 1,
+  smoothLandmarks: true,
+  minDetectionConfidence: 0.5,
+  minTrackingConfidence: 0.5
+});
+
+holistic.onResults(onResults);
+
+function onResults(results) {
+  ctx.save();
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  
+  // Рисуем видео-поток (нужно отрисовывать вручную на канвас, если хочешь эффектов поверх)
+  // Но мы просто используем прозрачный канвас над видео для скорости.
+
+  // 1. ОТСЛЕЖИВАНИЕ ТЕЛА (Player_404)
+  if (results.poseLandmarks) {
+    drawPlayerBox(results.poseLandmarks);
   }
-};
 
-function startTracking() {
-  const hands = new Hands({
-    locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+  // 2. ДЖАРВИС HUD (Лицо)
+  if (results.faceLandmarks) {
+    drawFaceHUD(results.faceLandmarks);
+  }
+
+  // 3. РУКИ + РИСОВАНИЕ
+  if (results.rightHandLandmarks || results.leftHandLandmarks) {
+    const hand = results.rightHandLandmarks || results.leftHandLandmarks;
+    handleDrawing(hand);
+    
+    // Рисуем кости руки в стиле киберпанк
+    drawConnectors(ctx, hand, HAND_CONNECTIONS, {color: '#00eeff', lineWidth: 2});
+    drawLandmarks(ctx, hand, {color: '#ff0055', lineWidth: 1, radius: 3});
+  } else {
+    isDrawing = false;
+  }
+
+  // Рендерим накопленные линии (Air Draw)
+  renderCanvasDrawing();
+  
+  ctx.restore();
+}
+
+function drawPlayerBox(landmarks) {
+  let minX = 1, minY = 1, maxX = 0, maxY = 0;
+  landmarks.forEach(lm => {
+    if (lm.x < minX) minX = lm.x;
+    if (lm.y < minY) minY = lm.y;
+    if (lm.x > maxX) maxX = lm.x;
+    if (lm.y > maxY) maxY = lm.y;
   });
 
-  hands.setOptions({
-    maxNumHands: 2, // Теперь трекает до 2 рук, мы же не жадные
-    modelComplexity: 1,
-    minDetectionConfidence: 0.7,
-    minTrackingConfidence: 0.7
-  });
+  const x = minX * canvas.width;
+  const y = minY * canvas.height;
+  const w = (maxX - minX) * canvas.width;
+  const h = (maxY - minY) * canvas.height;
 
-  hands.onResults(results => {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = '#ff0055';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([5, 5]);
+  ctx.strokeRect(x - 20, y - 20, w + 40, h + 40);
+  ctx.setLineDash([]);
 
-    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-      for (const landmarks of results.multiHandLandmarks) {
-        
-        // 1. ОТРИСОВКА СКЕЛЕТА (топ фишка)
-        drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {
-          color: '#00FFea', lineWidth: 4
-        });
-        drawLandmarks(ctx, landmarks, {
-          color: '#FF0055', lineWidth: 2, radius: 4
-        });
+  ctx.fillStyle = '#ff0055';
+  ctx.font = '14px Courier New';
+  ctx.fillText('TARGET: PLAYER_404', x - 20, y - 30);
+  ctx.fillText(`DIST: ${Math.round(landmarks[0].z * -100)}m`, x - 20, y - 45);
+}
 
-        // 2. ФИШКА: НЕОНОВЫЙ ТРЕЙЛ ЗА УКАЗАТЕЛЬНЫМ ПАЛЬЦЕМ (точка 8)
-        const indexTip = landmarks[8];
-        const x = indexTip.x * canvas.width;
-        const y = indexTip.y * canvas.height;
-        
-        pointerTrail.push({x, y});
-        if (pointerTrail.length > 15) pointerTrail.shift(); // Длина хвоста
+function drawFaceHUD(landmarks) {
+  const nose = landmarks[1];
+  const x = nose.x * canvas.width;
+  const y = nose.y * canvas.height;
 
-        ctx.beginPath();
-        for (let i = 0; i < pointerTrail.length; i++) {
-          const pt = pointerTrail[i];
-          if (i === 0) ctx.moveTo(pt.x, pt.y);
-          else ctx.lineTo(pt.x, pt.y);
-        }
-        ctx.strokeStyle = `rgba(0, 255, 234, 0.8)`;
-        ctx.lineWidth = 6;
-        ctx.lineCap = "round";
-        ctx.stroke();
+  // Крутящееся кольцо вокруг лица
+  ctx.beginPath();
+  ctx.arc(x, y, 80, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(0, 238, 255, 0.3)';
+  ctx.setLineDash([15, 10]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
 
-        // 3. РАСПОЗНАВАНИЕ ЖЕСТОВ
-        const gesture = detectGesture(landmarks);
-        hud.innerText = gesture;
-        
-        // Меняем цвет текста в зависимости от жеста для атмосферы
-        if (gesture === "Кулак ✊") hud.style.color = "#ff3333";
-        else if (gesture === "Peace ✌️") hud.style.color = "#33ccff";
-        else if (gesture === "Рок 🤘") hud.style.color = "#ff00aa";
-        else hud.style.color = "lime";
-      }
-    } else {
-      pointerTrail = []; // Очищаем хвост, если рука пропала
-      hud.innerText = "Рука не найдена";
-      hud.style.color = "white";
+function handleDrawing(hand) {
+  const thumbTip = hand[4];
+  const indexTip = hand[8];
+  
+  // Расстояние между большим и указательным (щипок)
+  const dist = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
+  
+  if (dist < 0.05) { // Пальцы сжаты
+    if (!isDrawing) {
+      drawingPoints.push([]); // Начинаем новую линию
+      isDrawing = true;
     }
-  });
+    const currentLine = drawingPoints[drawingPoints.length - 1];
+    currentLine.push({ x: indexTip.x * canvas.width, y: indexTip.y * canvas.height });
+    statusText.innerHTML = "SYSTEM: ACTIVE<br>MODE: AIR_PAINTING";
+  } else {
+    isDrawing = false;
+    statusText.innerHTML = "SYSTEM: SCANNING<br>MODE: HUD_ONLY";
+  }
+}
 
-  const camera = new Camera(video, {
+function renderCanvasDrawing() {
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.shadowBlur = 10;
+  ctx.shadowColor = '#0066ff';
+  ctx.strokeStyle = '#0066ff'; // Твой синий цвет
+  ctx.lineWidth = 5;
+
+  drawingPoints.forEach(line => {
+    if (line.length < 2) return;
+    ctx.beginPath();
+    ctx.moveTo(line[0].x, line[0].y);
+    line.forEach(pt => ctx.lineTo(pt.x, pt.y));
+    ctx.stroke();
+  });
+  ctx.shadowBlur = 0;
+}
+
+async function startCamera() {
+  if (camera) await camera.stop();
+  
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+
+  // Если камера задняя, убираем зеркальное отражение
+  video.style.transform = currentFacingMode === 'user' ? 'scaleX(-1)' : 'scaleX(1)';
+  canvas.style.transform = currentFacingMode === 'user' ? 'scaleX(-1)' : 'scaleX(1)';
+
+  camera = new Camera(video, {
     onFrame: async () => {
-      await hands.send({ image: video });
+      await holistic.send({image: video});
     },
-    width: 640,
-    height: 480
+    facingMode: currentFacingMode,
+    width: 1280,
+    height: 720
   });
-
   camera.start();
 }
 
-// Нормальная функция детекта (через сгибы суставов, а не тупо по координатам)
-function detectGesture(landmarks) {
-  // Функция проверки: поднят ли палец (сравниваем кончик с нижним суставом)
-  const isUp = (tip, pip) => landmarks[tip].y < landmarks[pip].y;
+startBtn.onclick = () => {
+  startCamera();
+  startBtn.style.display = 'none';
+  switchBtn.style.display = 'block';
+  clearBtn.style.display = 'block';
+};
 
-  const indexUp = isUp(8, 6);
-  const middleUp = isUp(12, 10);
-  const ringUp = isUp(16, 14);
-  const pinkyUp = isUp(20, 18);
+switchBtn.onclick = () => {
+  currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
+  startCamera();
+};
 
-  // Логика жестов
-  if (!indexUp && !middleUp && !ringUp && !pinkyUp) return "Кулак ✊";
-  if (indexUp && middleUp && !ringUp && !pinkyUp) return "Peace ✌️";
-  if (indexUp && !middleUp && !ringUp && pinkyUp) return "Рок 🤘";
-  if (indexUp && middleUp && ringUp && pinkyUp) return "Открытая рука 🖐️";
-  
-  return "Трекинг...";
-}
+clearBtn.onclick = () => {
+  drawingPoints = [];
+};
+
+window.onresize = () => {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+};
 </script>
 
 </body>
