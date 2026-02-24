@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Stark OS - Jarvis</title>
+<title>Stark OS - Lite Dots</title>
 
 <style>
   body { margin: 0; background: #000; color: #00eeff; font-family: 'Share Tech Mono', monospace; overflow: hidden; }
@@ -15,23 +15,14 @@
     transform: scaleX(-1);
   }
 
-  /* Анимация приветствия */
   #boot-screen {
     position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-    background: rgba(0, 10, 20, 0.9);
+    background: rgba(0, 10, 20, 1);
     display: none; justify-content: center; align-items: center;
     z-index: 200; flex-direction: column;
   }
 
-  .boot-text {
-    font-size: 30px; letter-spacing: 5px;
-    animation: blink 0.1s infinite alternate;
-    text-shadow: 0 0 15px #00eeff;
-  }
-
-  @keyframes blink { 
-    from { opacity: 1; } to { opacity: 0.7; } 
-  }
+  .boot-text { font-size: 30px; letter-spacing: 5px; text-shadow: 0 0 15px #00eeff; }
 
   .ui-panel {
     position: absolute; z-index: 100; padding: 20px;
@@ -39,20 +30,8 @@
   }
 
   button {
-    background: rgba(0, 238, 255, 0.15);
-    border: 1px solid #00eeff;
-    color: #00eeff;
-    padding: 12px 24px;
-    cursor: pointer;
-    text-transform: uppercase;
-    font-weight: bold;
-    backdrop-filter: blur(5px);
-  }
-
-  #status-hud {
-    position: absolute; bottom: 30px; right: 30px;
-    text-align: right; pointer-events: none;
-    font-size: 14px; opacity: 0.8;
+    background: rgba(0, 238, 255, 0.2); border: 1px solid #00eeff; color: #00eeff;
+    padding: 12px; font-weight: bold; backdrop-filter: blur(5px);
   }
 </style>
 <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
@@ -62,19 +41,13 @@
 <div id="container">
   <div id="boot-screen">
     <div class="boot-text">HELLO, SIR</div>
-    <div style="font-size: 12px; margin-top: 10px;">INITIALIZING JARVIS OS...</div>
+    <div style="font-size: 14px; margin-top: 15px; color: lime;">OPTIMIZED MODE: DOTS ONLY</div>
   </div>
 
   <div class="ui-panel">
-    <button id="startBtn">ЗАПУСК СИСТЕМЫ</button>
-    <button id="switchCamBtn" style="display:none;">CAM_SWAP</button>
-    <button id="clearBtn" style="display:none;">ERASE_MAP</button>
-  </div>
-
-  <div id="status-hud">
-    SYS_VOLTAGE: 220V<br>
-    LOCAL_TIME: <span id="clock">--:--</span><br>
-    STATUS: STANDBY
+    <button id="startBtn">ЗАПУСК (LITE)</button>
+    <button id="switchCamBtn" style="display:none;">СМЕНИТЬ КАМЕРУ</button>
+    <button id="clearBtn" style="display:none;">ОЧИСТИТЬ</button>
   </div>
 
   <video id="video" playsinline></video>
@@ -93,21 +66,20 @@ const startBtn = document.getElementById('startBtn');
 const bootScreen = document.getElementById('boot-screen');
 const switchBtn = document.getElementById('switchCamBtn');
 const clearBtn = document.getElementById('clearBtn');
-const statusHud = document.getElementById('status-hud');
 
 let currentFacingMode = 'user';
 let camera = null;
 let drawingPoints = []; 
 let isDrawing = false;
 
-// Оптимизированный Holistic (без позы)
 const holistic = new Holistic({
   locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
 });
 
 holistic.setOptions({
-  modelComplexity: 0, // МИНИМАЛЬНАЯ СЛОЖНОСТЬ = МАКСИМАЛЬНЫЙ FPS
+  modelComplexity: 0, // Самый легкий режим
   smoothLandmarks: true,
+  enableFaceGeometry: false, // Отключаем лишнюю геометрию
   minDetectionConfidence: 0.5,
   minTrackingConfidence: 0.5
 });
@@ -118,23 +90,26 @@ function onResults(results) {
   ctx.save();
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // 1. ЗЕЛЕНАЯ МАСКА ЛИЦА (Face Mesh)
+  // 1. ПРОСТО ЗЕЛЕНЫЕ ТОЧКИ НА ЛИЦЕ
   if (results.faceLandmarks) {
-    // Сетка лица (Tesselation)
-    drawConnectors(ctx, results.faceLandmarks, FACEMESH_TESSELATION, 
-      {color: 'rgba(0, 255, 100, 0.2)', lineWidth: 1});
-    // Контуры (глаза, губы) - делаем ярче
-    drawConnectors(ctx, results.faceLandmarks, FACEMESH_CONTOURS, 
-      {color: 'rgba(0, 255, 100, 0.8)', lineWidth: 1});
+    ctx.fillStyle = '#00ff00'; // Чисто зеленый
+    for (const landmark of results.faceLandmarks) {
+      const x = landmark.x * canvas.width;
+      const y = landmark.y * canvas.height;
+      ctx.beginPath();
+      ctx.arc(x, y, 1.5, 0, 2 * Math.PI); // Рисуем точку радиусом 1.5px
+      ctx.fill();
+    }
   }
 
   // 2. РУКИ + РИСОВАНИЕ
   if (results.rightHandLandmarks || results.leftHandLandmarks) {
     const hand = results.rightHandLandmarks || results.leftHandLandmarks;
     handleDrawing(hand);
-    
+    // Рисуем скелет руки просто линиями
     drawConnectors(ctx, hand, HAND_CONNECTIONS, {color: '#00eeff', lineWidth: 2});
-    drawLandmarks(ctx, hand, {color: '#ff0055', lineWidth: 1, radius: 2});
+  } else {
+    isDrawing = false;
   }
 
   renderCanvasDrawing();
@@ -148,17 +123,20 @@ function handleDrawing(hand) {
   
   if (dist < 0.05) { 
     if (!isDrawing) { drawingPoints.push([]); isDrawing = true; }
-    drawingPoints[drawingPoints.length - 1].push({ 
-      x: indexTip.x * canvas.width, 
-      y: indexTip.y * canvas.height 
-    });
+    
+    const currentLine = drawingPoints[drawingPoints.length - 1];
+    currentLine.push({ x: indexTip.x * canvas.width, y: indexTip.y * canvas.height });
+
+    // ОПТИМИЗАЦИЯ: Ограничиваем длину хвоста (чтобы память не жрало)
+    if (currentLine.length > 200) currentLine.shift(); 
+    
   } else { isDrawing = false; }
 }
 
 function renderCanvasDrawing() {
   ctx.lineCap = 'round';
   ctx.strokeStyle = '#0066ff';
-  ctx.lineWidth = 5;
+  ctx.lineWidth = 4;
   drawingPoints.forEach(line => {
     if (line.length < 2) return;
     ctx.beginPath();
@@ -169,31 +147,26 @@ function renderCanvasDrawing() {
 }
 
 async function startCamera() {
-  // Анимация Hello, Sir
   bootScreen.style.display = 'flex';
-  
-  setTimeout(async () => {
-    if (video.srcObject) {
-      video.srcObject.getTracks().forEach(t => t.stop());
-    }
+  if (camera) await camera.stop();
 
+  setTimeout(async () => {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-
     const isUser = currentFacingMode === 'user';
-    video.style.transform = isUser ? 'scaleX(-1)' : 'scaleX(1)';
-    canvas.style.transform = isUser ? 'scaleX(-1)' : 'scaleX(1)';
+    video.style.transform = canvas.style.transform = isUser ? 'scaleX(-1)' : 'scaleX(1)';
 
     camera = new Camera(video, {
       onFrame: async () => { await holistic.send({image: video}); },
       facingMode: currentFacingMode,
-      width: 640, height: 480 // Оптимально для мобилок
+      // ОПТИМИЗАЦИЯ: Снижаем разрешение для скорости
+      width: 480, 
+      height: 360 
     });
     
     await camera.start();
     bootScreen.style.display = 'none';
-    statusHud.innerHTML = `SYS_VOLTAGE: 220V<br>STATUS: ONLINE<br>MODE: JARVIS_V2`;
-  }, 2000); // 2 секунды пафосной загрузки
+  }, 1500);
 }
 
 startBtn.onclick = () => {
@@ -202,19 +175,11 @@ startBtn.onclick = () => {
   switchBtn.style.display = 'block';
   clearBtn.style.display = 'block';
 };
-
 switchBtn.onclick = () => {
   currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
   startCamera();
 };
-
 clearBtn.onclick = () => drawingPoints = [];
-
-// Часы для HUD
-setInterval(() => {
-  const d = new Date();
-  document.getElementById('clock').innerText = d.getHours() + ":" + d.getMinutes().toString().padStart(2, '0');
-}, 1000);
 </script>
 </body>
 </html>
