@@ -1,0 +1,13 @@
+body {
+  text-align: center;
+  background: #111;
+  color: white;
+  font-family: Arial;
+}
+
+video, canvas {
+  width: 90%;
+  max-width: 600px;
+  border-radius: 12px;
+  margin-top: 10px;
+}
