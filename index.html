@@ -2,36 +2,30 @@
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+body {
+  background:black;
+  color:white;
+  text-align:center;
+}
+video, canvas {
+  width:90%;
+  max-width:500px;
+  transform: scaleX(-1); /* инверсия */
+}
+</style>
 </head>
-<body style="background:black;color:white;text-align:center">
+<body>
 
-<h2>Camera Test</h2>
-
-<button id="startBtn" style="padding:15px;font-size:18px;">
-Включить камеру
-</button>
-
+<h2>Color Tracker</h2>
+<button onclick="startCamera()">Включить камеру</button>
 <br><br>
 
-<video id="video" autoplay playsinline style="width:90%;max-width:500px;"></video>
+<video id="video" autoplay playsinline></video>
+<canvas id="canvas"></canvas>
 
-<script>
-const btn = document.getElementById("startBtn");
-const video = document.getElementById("video");
-
-btn.onclick = async () => {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: true,
-      audio: false
-    });
-    video.srcObject = stream;
-    alert("Камера запущена");
-  } catch (err) {
-    alert("Ошибка: " + err.message);
-  }
-};
-</script>
+<script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+<script src="script.js"></script>
 
 </body>
 </html>
