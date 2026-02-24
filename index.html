@@ -3,16 +3,34 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Jarvis HUD & Air Paint</title>
+<title>Stark OS - Jarvis</title>
 
 <style>
-  body { margin: 0; background: #000; color: #00eeff; font-family: 'Courier New', monospace; overflow: hidden; }
+  body { margin: 0; background: #000; color: #00eeff; font-family: 'Share Tech Mono', monospace; overflow: hidden; }
   
   #container { position: relative; width: 100vw; height: 100vh; }
   
   video, canvas { 
     position: absolute; width: 100%; height: 100%; object-fit: cover; 
-    transform: scaleX(-1); /* Зеркало для фронталки (логика переключения ниже) */
+    transform: scaleX(-1);
+  }
+
+  /* Анимация приветствия */
+  #boot-screen {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0, 10, 20, 0.9);
+    display: none; justify-content: center; align-items: center;
+    z-index: 200; flex-direction: column;
+  }
+
+  .boot-text {
+    font-size: 30px; letter-spacing: 5px;
+    animation: blink 0.1s infinite alternate;
+    text-shadow: 0 0 15px #00eeff;
+  }
+
+  @keyframes blink { 
+    from { opacity: 1; } to { opacity: 0.7; } 
   }
 
   .ui-panel {
@@ -21,35 +39,43 @@
   }
 
   button {
-    background: rgba(0, 238, 255, 0.2);
+    background: rgba(0, 238, 255, 0.15);
     border: 1px solid #00eeff;
     color: #00eeff;
-    padding: 10px 20px;
+    padding: 12px 24px;
     cursor: pointer;
     text-transform: uppercase;
     font-weight: bold;
-    transition: 0.3s;
+    backdrop-filter: blur(5px);
   }
 
-  button:hover { background: #00eeff; color: #000; box-shadow: 0 0 15px #00eeff; }
-
-  #status {
-    position: absolute; top: 20px; right: 20px;
+  #status-hud {
+    position: absolute; bottom: 30px; right: 30px;
     text-align: right; pointer-events: none;
-    text-shadow: 0 0 5px #00eeff;
+    font-size: 14px; opacity: 0.8;
   }
 </style>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
 </head>
 <body>
 
 <div id="container">
-  <div class="ui-panel">
-    <button id="startBtn">Инициализация системы</button>
-    <button id="switchCamBtn" style="display:none;">Сменить камеру</button>
-    <button id="clearBtn" style="display:none;">Очистить холст</button>
+  <div id="boot-screen">
+    <div class="boot-text">HELLO, SIR</div>
+    <div style="font-size: 12px; margin-top: 10px;">INITIALIZING JARVIS OS...</div>
   </div>
 
-  <div id="status">SYSTEM: STANDBY<br>USER: UNKNOWN</div>
+  <div class="ui-panel">
+    <button id="startBtn">ЗАПУСК СИСТЕМЫ</button>
+    <button id="switchCamBtn" style="display:none;">CAM_SWAP</button>
+    <button id="clearBtn" style="display:none;">ERASE_MAP</button>
+  </div>
+
+  <div id="status-hud">
+    SYS_VOLTAGE: 220V<br>
+    LOCAL_TIME: <span id="clock">--:--</span><br>
+    STATUS: STANDBY
+  </div>
 
   <video id="video" playsinline></video>
   <canvas id="canvas"></canvas>
@@ -64,22 +90,23 @@ const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 const startBtn = document.getElementById('startBtn');
+const bootScreen = document.getElementById('boot-screen');
 const switchBtn = document.getElementById('switchCamBtn');
 const clearBtn = document.getElementById('clearBtn');
-const statusText = document.getElementById('status');
+const statusHud = document.getElementById('status-hud');
 
 let currentFacingMode = 'user';
 let camera = null;
-let drawingPoints = []; // Массив для рисования [[{x,y}, {x,y}], [...]]
+let drawingPoints = []; 
 let isDrawing = false;
 
-// Инициализация Holistic
+// Оптимизированный Holistic (без позы)
 const holistic = new Holistic({
   locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
 });
 
 holistic.setOptions({
-  modelComplexity: 1,
+  modelComplexity: 0, // МИНИМАЛЬНАЯ СЛОЖНОСТЬ = МАКСИМАЛЬНЫЙ FPS
   smoothLandmarks: true,
   minDetectionConfidence: 0.5,
   minTrackingConfidence: 0.5
@@ -90,107 +117,48 @@ holistic.onResults(onResults);
 function onResults(results) {
   ctx.save();
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  
-  // Рисуем видео-поток (нужно отрисовывать вручную на канвас, если хочешь эффектов поверх)
-  // Но мы просто используем прозрачный канвас над видео для скорости.
 
-  // 1. ОТСЛЕЖИВАНИЕ ТЕЛА (Player_404)
-  if (results.poseLandmarks) {
-    drawPlayerBox(results.poseLandmarks);
-  }
-
-  // 2. ДЖАРВИС HUD (Лицо)
+  // 1. ЗЕЛЕНАЯ МАСКА ЛИЦА (Face Mesh)
   if (results.faceLandmarks) {
-    drawFaceHUD(results.faceLandmarks);
+    // Сетка лица (Tesselation)
+    drawConnectors(ctx, results.faceLandmarks, FACEMESH_TESSELATION, 
+      {color: 'rgba(0, 255, 100, 0.2)', lineWidth: 1});
+    // Контуры (глаза, губы) - делаем ярче
+    drawConnectors(ctx, results.faceLandmarks, FACEMESH_CONTOURS, 
+      {color: 'rgba(0, 255, 100, 0.8)', lineWidth: 1});
   }
 
-  // 3. РУКИ + РИСОВАНИЕ
+  // 2. РУКИ + РИСОВАНИЕ
   if (results.rightHandLandmarks || results.leftHandLandmarks) {
     const hand = results.rightHandLandmarks || results.leftHandLandmarks;
     handleDrawing(hand);
     
-    // Рисуем кости руки в стиле киберпанк
     drawConnectors(ctx, hand, HAND_CONNECTIONS, {color: '#00eeff', lineWidth: 2});
-    drawLandmarks(ctx, hand, {color: '#ff0055', lineWidth: 1, radius: 3});
-  } else {
-    isDrawing = false;
+    drawLandmarks(ctx, hand, {color: '#ff0055', lineWidth: 1, radius: 2});
   }
 
-  // Рендерим накопленные линии (Air Draw)
   renderCanvasDrawing();
-  
   ctx.restore();
-}
-
-function drawPlayerBox(landmarks) {
-  let minX = 1, minY = 1, maxX = 0, maxY = 0;
-  landmarks.forEach(lm => {
-    if (lm.x < minX) minX = lm.x;
-    if (lm.y < minY) minY = lm.y;
-    if (lm.x > maxX) maxX = lm.x;
-    if (lm.y > maxY) maxY = lm.y;
-  });
-
-  const x = minX * canvas.width;
-  const y = minY * canvas.height;
-  const w = (maxX - minX) * canvas.width;
-  const h = (maxY - minY) * canvas.height;
-
-  ctx.strokeStyle = '#ff0055';
-  ctx.lineWidth = 2;
-  ctx.setLineDash([5, 5]);
-  ctx.strokeRect(x - 20, y - 20, w + 40, h + 40);
-  ctx.setLineDash([]);
-
-  ctx.fillStyle = '#ff0055';
-  ctx.font = '14px Courier New';
-  ctx.fillText('TARGET: PLAYER_404', x - 20, y - 30);
-  ctx.fillText(`DIST: ${Math.round(landmarks[0].z * -100)}m`, x - 20, y - 45);
-}
-
-function drawFaceHUD(landmarks) {
-  const nose = landmarks[1];
-  const x = nose.x * canvas.width;
-  const y = nose.y * canvas.height;
-
-  // Крутящееся кольцо вокруг лица
-  ctx.beginPath();
-  ctx.arc(x, y, 80, 0, Math.PI * 2);
-  ctx.strokeStyle = 'rgba(0, 238, 255, 0.3)';
-  ctx.setLineDash([15, 10]);
-  ctx.stroke();
-  ctx.setLineDash([]);
 }
 
 function handleDrawing(hand) {
   const thumbTip = hand[4];
   const indexTip = hand[8];
-  
-  // Расстояние между большим и указательным (щипок)
   const dist = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
   
-  if (dist < 0.05) { // Пальцы сжаты
-    if (!isDrawing) {
-      drawingPoints.push([]); // Начинаем новую линию
-      isDrawing = true;
-    }
-    const currentLine = drawingPoints[drawingPoints.length - 1];
-    currentLine.push({ x: indexTip.x * canvas.width, y: indexTip.y * canvas.height });
-    statusText.innerHTML = "SYSTEM: ACTIVE<br>MODE: AIR_PAINTING";
-  } else {
-    isDrawing = false;
-    statusText.innerHTML = "SYSTEM: SCANNING<br>MODE: HUD_ONLY";
-  }
+  if (dist < 0.05) { 
+    if (!isDrawing) { drawingPoints.push([]); isDrawing = true; }
+    drawingPoints[drawingPoints.length - 1].push({ 
+      x: indexTip.x * canvas.width, 
+      y: indexTip.y * canvas.height 
+    });
+  } else { isDrawing = false; }
 }
 
 function renderCanvasDrawing() {
   ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-  ctx.shadowBlur = 10;
-  ctx.shadowColor = '#0066ff';
-  ctx.strokeStyle = '#0066ff'; // Твой синий цвет
+  ctx.strokeStyle = '#0066ff';
   ctx.lineWidth = 5;
-
   drawingPoints.forEach(line => {
     if (line.length < 2) return;
     ctx.beginPath();
@@ -198,28 +166,34 @@ function renderCanvasDrawing() {
     line.forEach(pt => ctx.lineTo(pt.x, pt.y));
     ctx.stroke();
   });
-  ctx.shadowBlur = 0;
 }
 
 async function startCamera() {
-  if (camera) await camera.stop();
+  // Анимация Hello, Sir
+  bootScreen.style.display = 'flex';
   
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+  setTimeout(async () => {
+    if (video.srcObject) {
+      video.srcObject.getTracks().forEach(t => t.stop());
+    }
 
-  // Если камера задняя, убираем зеркальное отражение
-  video.style.transform = currentFacingMode === 'user' ? 'scaleX(-1)' : 'scaleX(1)';
-  canvas.style.transform = currentFacingMode === 'user' ? 'scaleX(-1)' : 'scaleX(1)';
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
 
-  camera = new Camera(video, {
-    onFrame: async () => {
-      await holistic.send({image: video});
-    },
-    facingMode: currentFacingMode,
-    width: 1280,
-    height: 720
-  });
-  camera.start();
+    const isUser = currentFacingMode === 'user';
+    video.style.transform = isUser ? 'scaleX(-1)' : 'scaleX(1)';
+    canvas.style.transform = isUser ? 'scaleX(-1)' : 'scaleX(1)';
+
+    camera = new Camera(video, {
+      onFrame: async () => { await holistic.send({image: video}); },
+      facingMode: currentFacingMode,
+      width: 640, height: 480 // Оптимально для мобилок
+    });
+    
+    await camera.start();
+    bootScreen.style.display = 'none';
+    statusHud.innerHTML = `SYS_VOLTAGE: 220V<br>STATUS: ONLINE<br>MODE: JARVIS_V2`;
+  }, 2000); // 2 секунды пафосной загрузки
 }
 
 startBtn.onclick = () => {
@@ -234,15 +208,13 @@ switchBtn.onclick = () => {
   startCamera();
 };
 
-clearBtn.onclick = () => {
-  drawingPoints = [];
-};
+clearBtn.onclick = () => drawingPoints = [];
 
-window.onresize = () => {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-};
+// Часы для HUD
+setInterval(() => {
+  const d = new Date();
+  document.getElementById('clock').innerText = d.getHours() + ":" + d.getMinutes().toString().padStart(2, '0');
+}, 1000);
 </script>
-
 </body>
 </html>
