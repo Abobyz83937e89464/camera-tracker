@@ -1,81 +1,143 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Hand Gesture Tracker</title>
+<title>Pro Hand Tracker</title>
 
 <style>
-body {
-  margin: 0;
-  background: black;
-  color: white;
-  text-align: center;
-  font-family: Arial;
-}
+  * { box-sizing: border-box; }
+  
+  body {
+    margin: 0;
+    background: radial-gradient(circle, #1a1a2e, #0f0f1a);
+    color: white;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    overflow: hidden;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+  }
 
-video, canvas {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  transform: scaleX(-1);
-}
+  /* Контейнер чтобы видео и канвас не разъезжались */
+  #container {
+    position: relative;
+    width: 100%;
+    max-width: 800px;
+    aspect-ratio: 4/3;
+    border-radius: 16px;
+    box-shadow: 0 0 30px rgba(0, 255, 170, 0.2);
+    overflow: hidden;
+    background: #000;
+  }
 
-button {
-  position: fixed;
-  top: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 10;
-  padding: 15px 25px;
-  font-size: 18px;
-}
+  video, canvas {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1); /* Зеркалим изображение */
+  }
+
+  /* HUD для жестов */
+  #hud {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid lime;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 24px;
+    font-weight: bold;
+    color: lime;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    z-index: 5;
+    display: none;
+    text-shadow: 0 0 10px lime;
+  }
+
+  button {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 10;
+    padding: 15px 40px;
+    font-size: 20px;
+    font-weight: bold;
+    color: #fff;
+    background: linear-gradient(45deg, #ff0055, #ff00aa);
+    border: none;
+    border-radius: 30px;
+    cursor: pointer;
+    box-shadow: 0 0 20px rgba(255, 0, 170, 0.5);
+    transition: 0.2s;
+  }
+
+  button:hover {
+    transform: translate(-50%, -50%) scale(1.05);
+    box-shadow: 0 0 30px rgba(255, 0, 170, 0.8);
+  }
 </style>
 </head>
 <body>
 
-<button id="startBtn">Включить камеру</button>
+<div id="container">
+  <button id="startBtn">ВРУБИТЬ КАМЕРУ</button>
+  <video id="video" autoplay playsinline></video>
+  <canvas id="canvas"></canvas>
+  <div id="hud">Ожидание...</div>
+</div>
 
-<video id="video" autoplay playsinline></video>
-<canvas id="canvas"></canvas>
-
-<!-- MediaPipe -->
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 
 <script>
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 const btn = document.getElementById("startBtn");
+const hud = document.getElementById("hud");
 
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
-
-let hands;
+// Массив для фишки со следом (трейлом) указательного пальца
+let pointerTrail = [];
 
 btn.onclick = async () => {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: "user" }
-  });
-  video.srcObject = stream;
-  btn.style.display = "none";
-
-  startTracking();
+  btn.innerText = "Загрузка...";
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 640, height: 480, facingMode: "user" }
+    });
+    video.srcObject = stream;
+    
+    // Как только видео прогрузилось - стартуем трекинг
+    video.onloadedmetadata = () => {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      btn.style.display = "none";
+      hud.style.display = "block";
+      startTracking();
+    };
+  } catch (err) {
+    alert("Чел, дай доступ к камере! Без неё магии не будет.");
+    btn.innerText = "Ошибка доступа";
+  }
 };
 
 function startTracking() {
-
-  hands = new Hands({
-    locateFile: file => {
-      return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-    }
+  const hands = new Hands({
+    locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
   });
 
   hands.setOptions({
-    maxNumHands: 1,
+    maxNumHands: 2, // Теперь трекает до 2 рук, мы же не жадные
     modelComplexity: 1,
     minDetectionConfidence: 0.7,
     minTrackingConfidence: 0.7
@@ -84,18 +146,50 @@ function startTracking() {
   hands.onResults(results => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    if (results.multiHandLandmarks.length > 0) {
-      const landmarks = results.multiHandLandmarks[0];
+    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+      for (const landmarks of results.multiHandLandmarks) {
+        
+        // 1. ОТРИСОВКА СКЕЛЕТА (топ фишка)
+        drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {
+          color: '#00FFea', lineWidth: 4
+        });
+        drawLandmarks(ctx, landmarks, {
+          color: '#FF0055', lineWidth: 2, radius: 4
+        });
 
-      if (isOpenHand(landmarks)) {
-        const palm = landmarks[9]; // центр ладони
-        const x = palm.x * canvas.width;
-        const y = palm.y * canvas.height;
+        // 2. ФИШКА: НЕОНОВЫЙ ТРЕЙЛ ЗА УКАЗАТЕЛЬНЫМ ПАЛЬЦЕМ (точка 8)
+        const indexTip = landmarks[8];
+        const x = indexTip.x * canvas.width;
+        const y = indexTip.y * canvas.height;
+        
+        pointerTrail.push({x, y});
+        if (pointerTrail.length > 15) pointerTrail.shift(); // Длина хвоста
 
-        ctx.strokeStyle = "lime";
-        ctx.lineWidth = 4;
-        ctx.strokeRect(x - 80, y - 80, 160, 160);
+        ctx.beginPath();
+        for (let i = 0; i < pointerTrail.length; i++) {
+          const pt = pointerTrail[i];
+          if (i === 0) ctx.moveTo(pt.x, pt.y);
+          else ctx.lineTo(pt.x, pt.y);
+        }
+        ctx.strokeStyle = `rgba(0, 255, 234, 0.8)`;
+        ctx.lineWidth = 6;
+        ctx.lineCap = "round";
+        ctx.stroke();
+
+        // 3. РАСПОЗНАВАНИЕ ЖЕСТОВ
+        const gesture = detectGesture(landmarks);
+        hud.innerText = gesture;
+        
+        // Меняем цвет текста в зависимости от жеста для атмосферы
+        if (gesture === "Кулак ✊") hud.style.color = "#ff3333";
+        else if (gesture === "Peace ✌️") hud.style.color = "#33ccff";
+        else if (gesture === "Рок 🤘") hud.style.color = "#ff00aa";
+        else hud.style.color = "lime";
       }
+    } else {
+      pointerTrail = []; // Очищаем хвост, если рука пропала
+      hud.innerText = "Рука не найдена";
+      hud.style.color = "white";
     }
   });
 
@@ -110,29 +204,23 @@ function startTracking() {
   camera.start();
 }
 
-function isOpenHand(landmarks) {
+// Нормальная функция детекта (через сгибы суставов, а не тупо по координатам)
+function detectGesture(landmarks) {
+  // Функция проверки: поднят ли палец (сравниваем кончик с нижним суставом)
+  const isUp = (tip, pip) => landmarks[tip].y < landmarks[pip].y;
 
-  const fingers = [
-    [8, 6],   // указательный
-    [12,10],  // средний
-    [16,14],  // безымянный
-    [20,18]   // мизинец
-  ];
+  const indexUp = isUp(8, 6);
+  const middleUp = isUp(12, 10);
+  const ringUp = isUp(16, 14);
+  const pinkyUp = isUp(20, 18);
 
-  let openFingers = 0;
-
-  fingers.forEach(finger => {
-    if (landmarks[finger[0]].y < landmarks[finger[1]].y) {
-      openFingers++;
-    }
-  });
-
-  // большой палец
-  if (landmarks[4].x > landmarks[3].x) {
-    openFingers++;
-  }
-
-  return openFingers === 5;
+  // Логика жестов
+  if (!indexUp && !middleUp && !ringUp && !pinkyUp) return "Кулак ✊";
+  if (indexUp && middleUp && !ringUp && !pinkyUp) return "Peace ✌️";
+  if (indexUp && !middleUp && !ringUp && pinkyUp) return "Рок 🤘";
+  if (indexUp && middleUp && ringUp && pinkyUp) return "Открытая рука 🖐️";
+  
+  return "Трекинг...";
 }
 </script>
 
