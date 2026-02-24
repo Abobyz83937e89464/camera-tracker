@@ -3,183 +3,176 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Stark OS - Lite Dots</title>
-
+<title>Jarvis Lite OS</title>
 <style>
-  body { margin: 0; background: #000; color: #00eeff; font-family: 'Share Tech Mono', monospace; overflow: hidden; }
+  body { margin: 0; background: #000; color: #00eeff; font-family: 'Courier New', monospace; overflow: hidden; }
+  #container { position: relative; width: 100vw; height: 100vh; background: #000; }
+  video, canvas { position: absolute; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
   
-  #container { position: relative; width: 100vw; height: 100vh; }
-  
-  video, canvas { 
-    position: absolute; width: 100%; height: 100%; object-fit: cover; 
-    transform: scaleX(-1);
-  }
-
+  /* Панель Джарвиса */
   #boot-screen {
     position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-    background: rgba(0, 10, 20, 1);
-    display: none; justify-content: center; align-items: center;
-    z-index: 200; flex-direction: column;
+    background: #000; display: none; justify-content: center; align-items: center;
+    z-index: 1000; flex-direction: column;
   }
+  .loading-bar { width: 200px; height: 2px; background: #111; margin-top: 20px; overflow: hidden; }
+  .loading-progress { width: 0%; height: 100%; background: #00eeff; box-shadow: 0 0 10px #00eeff; animation: load 1.5s forwards; }
+  @keyframes load { to { width: 100%; } }
 
-  .boot-text { font-size: 30px; letter-spacing: 5px; text-shadow: 0 0 15px #00eeff; }
-
-  .ui-panel {
-    position: absolute; z-index: 100; padding: 20px;
-    display: flex; flex-direction: column; gap: 10px;
-  }
-
-  button {
-    background: rgba(0, 238, 255, 0.2); border: 1px solid #00eeff; color: #00eeff;
-    padding: 12px; font-weight: bold; backdrop-filter: blur(5px);
+  .ui-panel { position: absolute; z-index: 100; padding: 15px; display: flex; flex-direction: column; gap: 8px; }
+  button { 
+    background: rgba(0, 238, 255, 0.1); border: 1px solid #00eeff; color: #00eeff; 
+    padding: 10px; cursor: pointer; text-transform: uppercase; font-size: 12px;
   }
 </style>
-<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet">
 </head>
 <body>
 
 <div id="container">
   <div id="boot-screen">
-    <div class="boot-text">HELLO, SIR</div>
-    <div style="font-size: 14px; margin-top: 15px; color: lime;">OPTIMIZED MODE: DOTS ONLY</div>
+    <div style="font-size: 24px; letter-spacing: 4px;">HELLO, SIR</div>
+    <div class="loading-bar"><div class="loading-progress"></div></div>
   </div>
 
   <div class="ui-panel">
-    <button id="startBtn">ЗАПУСК (LITE)</button>
-    <button id="switchCamBtn" style="display:none;">СМЕНИТЬ КАМЕРУ</button>
-    <button id="clearBtn" style="display:none;">ОЧИСТИТЬ</button>
+    <button id="startBtn">INITIALIZE SYSTEM</button>
+    <button id="switchBtn" style="display:none;">FLIP_CAM</button>
+    <button id="clearBtn" style="display:none;">CLEAR_GRID</button>
   </div>
 
   <video id="video" playsinline></video>
   <canvas id="canvas"></canvas>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
 
 <script>
 const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
-const startBtn = document.getElementById('startBtn');
-const bootScreen = document.getElementById('boot-screen');
-const switchBtn = document.getElementById('switchCamBtn');
-const clearBtn = document.getElementById('clearBtn');
-
-let currentFacingMode = 'user';
-let camera = null;
-let drawingPoints = []; 
+const boot = document.getElementById('boot-screen');
+let drawingPoints = [];
 let isDrawing = false;
+let currentFacingMode = 'user';
 
-const holistic = new Holistic({
-  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${file}`
-});
+// 1. Настройка РУК
+const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+hands.setOptions({ maxNumHands: 1, modelComplexity: 0, minDetectionConfidence: 0.6 });
 
-holistic.setOptions({
-  modelComplexity: 0, // Самый легкий режим
-  smoothLandmarks: true,
-  enableFaceGeometry: false, // Отключаем лишнюю геометрию
-  minDetectionConfidence: 0.5,
-  minTrackingConfidence: 0.5
-});
+// 2. Настройка ЛИЦА (только точки)
+const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
+faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: false, minDetectionConfidence: 0.5 });
 
-holistic.onResults(onResults);
-
-function onResults(results) {
-  ctx.save();
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-  // 1. ПРОСТО ЗЕЛЕНЫЕ ТОЧКИ НА ЛИЦЕ
-  if (results.faceLandmarks) {
-    ctx.fillStyle = '#00ff00'; // Чисто зеленый
-    for (const landmark of results.faceLandmarks) {
-      const x = landmark.x * canvas.width;
-      const y = landmark.y * canvas.height;
-      ctx.beginPath();
-      ctx.arc(x, y, 1.5, 0, 2 * Math.PI); // Рисуем точку радиусом 1.5px
-      ctx.fill();
+// Обработка результатов лица
+faceMesh.onResults(results => {
+  if (results.multiFaceLandmarks) {
+    for (const landmarks of results.multiFaceLandmarks) {
+      // Рисуем рамку "как в OpenCV"
+      drawStarkBox(landmarks);
+      // Рисуем те самые зеленые точки
+      ctx.fillStyle = "#00ff44";
+      landmarks.forEach((pt, index) => {
+        if (index % 5 === 0) { // Оптимизация: рисуем каждую 5-ю точку для FPS
+          ctx.beginPath();
+          ctx.arc(pt.x * canvas.width, pt.y * canvas.height, 1, 0, 2 * Math.PI);
+          ctx.fill();
+        }
+      });
     }
   }
+});
 
-  // 2. РУКИ + РИСОВАНИЕ
-  if (results.rightHandLandmarks || results.leftHandLandmarks) {
-    const hand = results.rightHandLandmarks || results.leftHandLandmarks;
-    handleDrawing(hand);
-    // Рисуем скелет руки просто линиями
-    drawConnectors(ctx, hand, HAND_CONNECTIONS, {color: '#00eeff', lineWidth: 2});
-  } else {
-    isDrawing = false;
+// Обработка результатов рук
+hands.onResults(results => {
+  ctx.clearRect(0, 0, canvas.width, canvas.height); // Очистка перед отрисовкой
+  // Важно: Сначала просим FaceMesh обработать кадр (через глобальный цикл ниже)
+  
+  if (results.multiHandLandmarks) {
+    for (const hand of results.multiHandLandmarks) {
+      drawConnectors(ctx, hand, HAND_CONNECTIONS, {color: '#00eeff', lineWidth: 2});
+      handleAirDraw(hand);
+    }
   }
+  renderLines();
+});
 
-  renderCanvasDrawing();
-  ctx.restore();
+function drawStarkBox(landmarks) {
+  let xArr = landmarks.map(p => p.x);
+  let yArr = landmarks.map(p => p.y);
+  let minX = Math.min(...xArr) * canvas.width;
+  let minY = Math.min(...yArr) * canvas.height;
+  let maxX = Math.max(...xArr) * canvas.width;
+  let maxY = Math.max(...yArr) * canvas.height;
+
+  ctx.strokeStyle = "#00ff44";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([10, 5]);
+  ctx.strokeRect(minX - 10, minY - 10, (maxX - minX) + 20, (maxY - minY) + 20);
+  ctx.setLineDash([]);
+  ctx.fillStyle = "#00ff44";
+  ctx.font = "10px monospace";
+  ctx.fillText("TARGET_ID: 404_USER", minX - 10, minY - 15);
 }
 
-function handleDrawing(hand) {
-  const thumbTip = hand[4];
-  const indexTip = hand[8];
-  const dist = Math.hypot(thumbTip.x - indexTip.x, thumbTip.y - indexTip.y);
-  
-  if (dist < 0.05) { 
+function handleAirDraw(hand) {
+  const thumb = hand[4];
+  const index = hand[8];
+  const dist = Math.hypot(thumb.x - index.x, thumb.y - index.y);
+  if (dist < 0.05) {
     if (!isDrawing) { drawingPoints.push([]); isDrawing = true; }
-    
-    const currentLine = drawingPoints[drawingPoints.length - 1];
-    currentLine.push({ x: indexTip.x * canvas.width, y: indexTip.y * canvas.height });
-
-    // ОПТИМИЗАЦИЯ: Ограничиваем длину хвоста (чтобы память не жрало)
-    if (currentLine.length > 200) currentLine.shift(); 
-    
+    drawingPoints[drawingPoints.length - 1].push({x: index.x * canvas.width, y: index.y * canvas.height});
   } else { isDrawing = false; }
 }
 
-function renderCanvasDrawing() {
-  ctx.lineCap = 'round';
-  ctx.strokeStyle = '#0066ff';
+function renderLines() {
+  ctx.strokeStyle = "#0066ff";
   ctx.lineWidth = 4;
+  ctx.lineCap = "round";
   drawingPoints.forEach(line => {
     if (line.length < 2) return;
     ctx.beginPath();
     ctx.moveTo(line[0].x, line[0].y);
-    line.forEach(pt => ctx.lineTo(pt.x, pt.y));
+    line.forEach(p => ctx.lineTo(p.x, p.y));
     ctx.stroke();
   });
 }
 
-async function startCamera() {
-  bootScreen.style.display = 'flex';
-  if (camera) await camera.stop();
-
-  setTimeout(async () => {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    const isUser = currentFacingMode === 'user';
-    video.style.transform = canvas.style.transform = isUser ? 'scaleX(-1)' : 'scaleX(1)';
-
-    camera = new Camera(video, {
-      onFrame: async () => { await holistic.send({image: video}); },
-      facingMode: currentFacingMode,
-      // ОПТИМИЗАЦИЯ: Снижаем разрешение для скорости
-      width: 480, 
-      height: 360 
+async function init(mode) {
+  boot.style.display = 'flex';
+  const stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: mode, width: 480, height: 360}});
+  video.srcObject = stream;
+  
+  video.onloadedmetadata = () => {
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const camera = new Camera(video, {
+      onFrame: async () => {
+        await hands.send({image: video});
+        await faceMesh.send({image: video});
+      },
+      width: 480, height: 360
     });
-    
-    await camera.start();
-    bootScreen.style.display = 'none';
-  }, 1500);
+    camera.start();
+    setTimeout(() => { boot.style.display = 'none'; }, 1500);
+  };
 }
 
-startBtn.onclick = () => {
-  startCamera();
-  startBtn.style.display = 'none';
-  switchBtn.style.display = 'block';
-  clearBtn.style.display = 'block';
+document.getElementById('startBtn').onclick = (e) => {
+  init(currentFacingMode);
+  e.target.style.display = 'none';
+  document.getElementById('switchBtn').style.display = 'block';
+  document.getElementById('clearBtn').style.display = 'block';
 };
-switchBtn.onclick = () => {
+
+document.getElementById('switchBtn').onclick = () => {
   currentFacingMode = currentFacingMode === 'user' ? 'environment' : 'user';
-  startCamera();
+  location.reload(); // Проще всего для сброса потока
 };
-clearBtn.onclick = () => drawingPoints = [];
+
+document.getElementById('clearBtn').onclick = () => drawingPoints = [];
 </script>
 </body>
 </html>
