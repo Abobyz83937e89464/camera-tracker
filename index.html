@@ -2,109 +2,137 @@
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Camera Tracker</title>
+<title>Hand Gesture Tracker</title>
 
 <style>
 body {
+  margin: 0;
   background: black;
   color: white;
   text-align: center;
+  font-family: Arial;
 }
+
 video, canvas {
-  width: 90%;
-  max-width: 500px;
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   transform: scaleX(-1);
 }
+
 button {
-  padding: 15px;
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  padding: 15px 25px;
   font-size: 18px;
 }
 </style>
 </head>
 <body>
 
-<h2>Camera Tracker</h2>
 <button id="startBtn">Включить камеру</button>
-<br><br>
 
 <video id="video" autoplay playsinline></video>
 <canvas id="canvas"></canvas>
 
-<script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+<!-- MediaPipe -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 
 <script>
-const btn = document.getElementById("startBtn");
 const video = document.getElementById("video");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
+const btn = document.getElementById("startBtn");
 
-btn.addEventListener("click", async () => {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "user" }
-    });
-    video.srcObject = stream;
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
 
-    video.onloadedmetadata = () => {
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      waitForOpenCV();
-    };
+let hands;
 
-  } catch (err) {
-    alert("Ошибка: " + err.message);
-  }
-});
+btn.onclick = async () => {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: "user" }
+  });
+  video.srcObject = stream;
+  btn.style.display = "none";
 
-function waitForOpenCV() {
-  if (typeof cv !== "undefined" && cv.Mat) {
-    processVideo();
-  } else {
-    setTimeout(waitForOpenCV, 100);
-  }
+  startTracking();
+};
+
+function startTracking() {
+
+  hands = new Hands({
+    locateFile: file => {
+      return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+    }
+  });
+
+  hands.setOptions({
+    maxNumHands: 1,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.7,
+    minTrackingConfidence: 0.7
+  });
+
+  hands.onResults(results => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (results.multiHandLandmarks.length > 0) {
+      const landmarks = results.multiHandLandmarks[0];
+
+      if (isOpenHand(landmarks)) {
+        const palm = landmarks[9]; // центр ладони
+        const x = palm.x * canvas.width;
+        const y = palm.y * canvas.height;
+
+        ctx.strokeStyle = "lime";
+        ctx.lineWidth = 4;
+        ctx.strokeRect(x - 80, y - 80, 160, 160);
+      }
+    }
+  });
+
+  const camera = new Camera(video, {
+    onFrame: async () => {
+      await hands.send({ image: video });
+    },
+    width: 640,
+    height: 480
+  });
+
+  camera.start();
 }
 
-function processVideo() {
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+function isOpenHand(landmarks) {
 
-  let src = cv.imread(canvas);
-  let hsv = new cv.Mat();
-  let mask = new cv.Mat();
+  const fingers = [
+    [8, 6],   // указательный
+    [12,10],  // средний
+    [16,14],  // безымянный
+    [20,18]   // мизинец
+  ];
 
-  cv.cvtColor(src, hsv, cv.COLOR_RGBA2RGB);
-  cv.cvtColor(hsv, hsv, cv.COLOR_RGB2HSV);
+  let openFingers = 0;
 
-  let low = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [0,120,70,0]);
-  let high = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [10,255,255,255]);
+  fingers.forEach(finger => {
+    if (landmarks[finger[0]].y < landmarks[finger[1]].y) {
+      openFingers++;
+    }
+  });
 
-  cv.inRange(hsv, low, high, mask);
-
-  let contours = new cv.MatVector();
-  let hierarchy = new cv.Mat();
-
-  cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-  for (let i = 0; i < contours.size(); i++) {
-    let rect = cv.boundingRect(contours.get(i));
-    cv.rectangle(src,
-      new cv.Point(rect.x, rect.y),
-      new cv.Point(rect.x + rect.width, rect.y + rect.height),
-      [0,255,0,255],
-      2
-    );
+  // большой палец
+  if (landmarks[4].x > landmarks[3].x) {
+    openFingers++;
   }
 
-  cv.imshow(canvas, src);
-
-  src.delete();
-  hsv.delete();
-  mask.delete();
-  low.delete();
-  high.delete();
-  contours.delete();
-  hierarchy.delete();
-
-  requestAnimationFrame(processVideo);
+  return openFingers === 5;
 }
 </script>
 
